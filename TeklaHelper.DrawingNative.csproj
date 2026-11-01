@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <PlatformTarget>x64</PlatformTarget>
+    <Platforms>x64</Platforms>
+    <OutputType>Library</OutputType>
+    <RootNamespace>TeklaHelper.DrawingNative</RootNamespace>
+    <AssemblyName>TeklaHelper.DrawingNative</AssemblyName>
+    <LangVersion>7.3</LangVersion>
+    <Nullable>disable</Nullable>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <OutputPath>bin\$(Configuration)\</OutputPath>
+    <Version>1.0.0</Version>
+    <Description>OOP wrapper for the native drawing Plugin API of Tekla Structures (Drawings.dll): plugin inputs, objects drawn by a plugin, moving plugins, drawing relations. Runs inside the Tekla process (macros, plugins).</Description>
+  </PropertyGroup>
+
+  <!-- NuGet package metadata. -->
+  <PropertyGroup>
+    <PackageId>TeklaHelper.DrawingNative</PackageId>
+    <Authors>Nguyen Thang</Authors>
+    <Copyright>Copyright (c) Nguyen Thang</Copyright>
+    <PackageTags>tekla;tekla-structures;drawing;plugin;native;macro</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/nguyenthanguth/TeklaHelper.DrawingNative</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/nguyenthanguth/TeklaHelper.DrawingNative.git</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+  </PropertyGroup>
+
+  <!-- Examples are Tekla macros: not compiled into the DLL, only packed into the examples/ folder of the package. -->
+  <ItemGroup>
+    <Compile Remove="Examples\**" />
+    <None Include="Examples\*.cs" Pack="true" PackagePath="examples\" />
+    <None Include="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+</Project>
