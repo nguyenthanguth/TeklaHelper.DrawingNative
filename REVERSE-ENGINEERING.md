@@ -159,6 +159,38 @@ Running from a console application raised an `AccessViolationException`. The rea
 That is why the library checks `GetModuleHandle("Drawings.dll")` before every native call (`Common/NativeHost.cs`). If Tekla has not
 already loaded this DLL into the current process, the library throws `InvalidOperationException` instead of letting the process die.
 
+### Step 9 - Saved drawing file (.dg)
+
+The objects drawn by a plugin can also be read from the saved drawing file `<model>\drawings\D<guid>.dg`, without
+Tekla. The format was taken from `dbv_readtable` → `FUN_18003ee20` and `dbv_writetable` → `FUN_180043fa0` in `DBvirtual.dll`,
+then checked by parsing a real file to its last byte.
+
+- The file is **gzip**. Decompressed, it starts with the 12-byte header `"Xsteel %5.2f"` (for example `Xsteel  9.54`).
+- Next comes a **table directory**: a table whose 4-byte rows are the table numbers (`0x144`, `0x143` … `0xFD`).
+- Then one table per directory entry, in **reverse directory order** (`0xFD`, `0xFE`, `0x100` …). Every table is:
+
+| Field | Size |
+|---|---|
+| Row count | `uint32` |
+| Row length | `uint32` |
+| Per row: state byte, then the row bytes | `1 + row length` |
+
+- The state byte is 1..10. `dbv_readtable` rejects 11 and 12, and skips rows in state 6, 8 or 10 (bit mask `0x1d40`),
+  so the library reports them as deleted.
+- The row lengths match the tables in memory: `gr_object` (`0x130`) `0x18`, dimension (`0x100`) `0x5D8`, mark (`0x108`)
+  `0x248`, graphic object (`0x116`) `0x128`.
+- Dimension table (`0x100`): `+0x4` dimension ID, `+0x8` World, `+0xC` ID of the **dimension set** that contains it.
+  In memory the same field is the key of the index `gr_dim_pid_idx`. This matches `DimensionSetBase.GetObjects()`
+  of the Open API.
+
+**Finding the file of a drawing.** Every save writes a new `D<random guid>.dg` and keeps the older versions (16 versions
+of one drawing were found in the test model), so the file name is not the drawing GUID. Each version has an XML file
+`D<random guid>.dg.metadata` (`<DrawingVersionMetadata>`) with `DrawingGuid` (= `Drawing.GetIdentifier().GUID`),
+`Name`, `Mark`, `DrawingType` and `ModifyDate`. `ModifyDate` counts seconds since 1970 in local wall-clock time, not UTC:
+it matches the local write time of the .dg file. The newest version is the one with the largest `ModifyDate`.
+
+The result is `DrawingFile/DgFile.cs` and `DrawingFile/DgMetadata.cs`.
+
 ## 4. Library architecture
 
 ```
@@ -175,7 +207,12 @@ Plugin/
   NativeMethods.cs             P/Invoke for Drawings.dll (29 functions)
   NativePluginInput.cs         Wrapper for grclaPluginInput_c (IDisposable)
   DrawingNativePlugin.cs       Public API
-Examples/                      Sample macros: GetPluginChildren, MovePlugin
+DrawingFile/
+  DgFile.cs                    Reader for saved drawing files (.dg), works without Tekla
+  DgMetadata.cs                .dg.metadata: drawing GUID of a file version, newest version of a drawing
+  DgTable.cs / DgRow.cs        Raw tables and rows of the file
+  DgDrawingObject.cs           One row of the gr_object table
+Examples/                      Sample macros: GetPluginChildrenFromNative, GetPluginChildrenFromFile, MovePlugin
 ```
 
 ## 5. When upgrading Tekla Structures

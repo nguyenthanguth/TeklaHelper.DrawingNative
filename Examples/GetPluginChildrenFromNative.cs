@@ -9,7 +9,7 @@
 #pragma warning restore 1633 // Unrecognized #pragma directive
 
 // =====================================================================================
-// TeklaHelper.DrawingNative example - GetPluginChildren
+// TeklaHelper.DrawingNative example - GetPluginChildrenFromNative
 // Lists the inputs and the objects drawn by each selected plugin (dimensions, marks, lines...).
 // GetChildIds returns every object, including the dimensions inside a DimensionSet; the macro uses the Open API
 // (DimensionSetBase.GetObjects) to show only the top-level objects, with each set's dimensions listed under it.
@@ -31,7 +31,7 @@ namespace UserMacros
 {
     public sealed class Macro
     {
-        private const string MacroName = "GetPluginChildren";
+        private const string MacroName = "GetPluginChildrenFromNative";
 
         [Tekla.Macros.Runtime.MacroEntryPointAttribute()]
         public static void Run(Tekla.Macros.Runtime.IMacroRuntime runtime)
@@ -74,25 +74,8 @@ namespace UserMacros
                         children[childId] = Operation.GetDrawingObject(new Identifier(childId), drawing.GetIdentifier());
                     }
 
-                    Dictionary<int, List<int>> setMembers = new Dictionary<int, List<int>>();
-                    HashSet<int> nested = new HashSet<int>();
-                    foreach (KeyValuePair<int, DrawingObject> child in children)
-                    {
-                        DimensionSetBase set = child.Value as DimensionSetBase;
-                        if (set == null) continue;
-
-                        List<int> members = new List<int>();
-                        DrawingObjectEnumerator dimensions = set.GetObjects();
-                        while (dimensions.MoveNext())
-                        {
-                            int dimensionId = dimensions.Current.GetIdentifier().ID;
-                            members.Add(dimensionId);
-                            nested.Add(dimensionId);
-                        }
-                        setMembers[child.Key] = members;
-                    }
-
-                    List<int> topLevelIds = childIds.FindAll(id => !nested.Contains(id));
+                    Dictionary<int, List<int>> setMembers;
+                    List<int> topLevelIds = GroupChildren(childIds, children, out setMembers);
                     report.AppendLine(string.Format("  [CHILD] {0} top-level object(s), {1} in total:", topLevelIds.Count, childIds.Count));
                     foreach (int childId in topLevelIds)
                     {
@@ -122,6 +105,37 @@ namespace UserMacros
             {
                 MessageBox.Show("Error:\n" + ex, MacroName, MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
+        }
+
+        /// <summary>
+        /// Groups the objects drawn by a plugin into parent/child: GetChildIds also returns the dimensions inside a
+        /// DimensionSet; the set -> dimension relation comes from the Open API (DimensionSetBase.GetObjects).
+        /// </summary>
+        /// <param name="childIds">Objects drawn by the plugin (DrawingNativePlugin.GetChildIds).</param>
+        /// <param name="children">The same objects, loaded with Operation.GetDrawingObject.</param>
+        /// <param name="setMembers">For every DimensionSet in <paramref name="childIds"/>: its dimensions.</param>
+        /// <returns>The top-level objects: <paramref name="childIds"/> without the dimensions that belong to a set.</returns>
+        private static List<int> GroupChildren(List<int> childIds, Dictionary<int, DrawingObject> children,
+                                               out Dictionary<int, List<int>> setMembers)
+        {
+            setMembers = new Dictionary<int, List<int>>();
+            HashSet<int> nested = new HashSet<int>();
+            foreach (KeyValuePair<int, DrawingObject> child in children)
+            {
+                DimensionSetBase set = child.Value as DimensionSetBase;
+                if (set == null) continue;
+
+                List<int> members = new List<int>();
+                DrawingObjectEnumerator dimensions = set.GetObjects();
+                while (dimensions.MoveNext())
+                {
+                    int dimensionId = dimensions.Current.GetIdentifier().ID;
+                    members.Add(dimensionId);
+                    nested.Add(dimensionId);
+                }
+                setMembers[child.Key] = members;
+            }
+            return childIds.FindAll(id => !nested.Contains(id));
         }
 
         private static string TypeName(DrawingObject drawingObject)

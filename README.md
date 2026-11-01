@@ -16,7 +16,8 @@ It covers what the Tekla Open API cannot do:
 | Runtime | **Inside the Tekla process** (macros, plugins) with a drawing open |
 
 > The library calls Tekla's native DLLs directly. In an external process (console app, WinForms...) those DLLs hold
-> no drawing data, so every method throws `InvalidOperationException`.
+> no drawing data, so every method throws `InvalidOperationException`. The only exception is the saved drawing file
+> reader (`TeklaHelper.DrawingNative.DrawingFile`), which is plain managed code and works in any process.
 
 ## Installation
 
@@ -55,11 +56,47 @@ Namespace `TeklaHelper.DrawingNative`: `RelationType` (the complete `grdbRelatio
 >
 > `GetChildIds` returns every object, including the dimensions inside a DimensionSet drawn by the same plugin. To keep
 > only the top-level objects, remove the IDs returned by `DimensionSetBase.GetObjects()` (Open API), as
-> `examples/GetPluginChildren.cs` does.
+> `examples/GetPluginChildrenFromNative.cs` does.
+
+### Reading a saved drawing file (fallback)
+
+Namespace `TeklaHelper.DrawingNative.DrawingFile` reads a saved drawing file (`<model>\drawings\D<guid>.dg`) with plain
+managed code. It works in any process, also outside Tekla, but only sees the drawing as it was when it was last saved.
+
+| Member | Purpose |
+|---|---|
+| `DgMetadata.FindLatest(drawingsDirectory, drawingGuid)` | Newest saved version of a drawing (`DrawingFilePath`, `ModifyTime`, `Name`, `Mark`) |
+| `DgFile.Load(path)` / `Load(stream)` | Load a .dg file (gzip-compressed or already decompressed) |
+| `DgFile.GetChildIds(pluginId)` | IDs of the objects drawn by a plugin, as saved (same result as `DrawingNativePlugin.GetChildIds`) |
+| `DgFile.GetDimensionIds(dimensionSetId)` | IDs of the dimensions inside a dimension set |
+| `DgFile.GetObjects()` | Every row of the gr_object table (`DgDrawingObject`: type, ID, World, owning plugin) |
+| `DgFile.GetTable(number)` | Any raw table of the drawing database (`DgTable` / `DgRow`) |
+
+Every save writes a new `D<random guid>.dg` and keeps the older versions, so the file name does not identify the drawing.
+The drawing GUID is stored in the `D<random guid>.dg.metadata` file next to it; `DgMetadata.FindLatest` picks the newest
+version of a drawing.
+
+```csharp
+using TeklaHelper.DrawingNative.DrawingFile;
+
+string drawingsDirectory = Path.Combine(model.GetInfo().ModelPath, "drawings");
+DgMetadata latest = DgMetadata.FindLatest(drawingsDirectory, drawing.GetIdentifier().GUID);
+if (latest != null)
+{
+    DgFile file = DgFile.Load(latest.DrawingFilePath);
+    List<int> childIds = file.GetChildIds(pluginId);
+}
+```
 
 ## Examples
 
-The package ships two complete macros in the `examples/` folder: `GetPluginChildren.cs` and `MovePlugin.cs`.
+The package ships three complete macros in the `examples/` folder:
+
+| Macro | Shows |
+|---|---|
+| `GetPluginChildrenFromNative.cs` | Inputs and drawn objects of the selected plugins, from Tekla's memory |
+| `GetPluginChildrenFromFile.cs` | Drawn objects of the selected plugins, from the saved drawing file (`DgMetadata` + `DgFile`) |
+| `MovePlugin.cs` | Moving the selected plugins |
 
 ### Read the inputs and child objects of a plugin
 
