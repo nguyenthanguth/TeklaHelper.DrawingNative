@@ -11,7 +11,7 @@
     <Nullable>disable</Nullable>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <OutputPath>bin\$(Configuration)\</OutputPath>
-    <Version>1.0.0</Version>
+    <Version>1.1.0</Version>
     <Description>OOP wrapper for the native drawing Plugin API of Tekla Structures (Drawings.dll): plugin inputs, objects drawn by a plugin, moving plugins, drawing relations. Runs inside the Tekla process (macros, plugins).</Description>
   </PropertyGroup>
 
