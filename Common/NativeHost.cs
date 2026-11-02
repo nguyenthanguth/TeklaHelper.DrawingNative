@@ -17,6 +17,9 @@ namespace TeklaHelper.DrawingNative
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
         private static extern IntPtr GetModuleHandle(string moduleName);
 
+        [DllImport("kernel32.dll", CharSet = CharSet.Ansi, ExactSpelling = true)]
+        private static extern IntPtr GetProcAddress(IntPtr module, string procName);
+
         /// <summary>
         /// Throws <see cref="InvalidOperationException"/> if Drawings.dll has not already been loaded by Tekla
         /// in the current process.
@@ -29,6 +32,17 @@ namespace TeklaHelper.DrawingNative
                     "TeklaHelper.DrawingNative only works inside the Tekla Structures process (macros, plugins). " +
                     "The current process has not loaded Tekla's " + NativeFile.DRAWINGS + ", so no drawing data is available.");
             }
+        }
+
+        /// <summary>
+        /// Whether the Drawings.dll loaded by Tekla exports <paramref name="exportName"/> (exact decorated name).
+        /// Throws <see cref="InvalidOperationException"/> outside the Tekla process, like <see cref="EnsureInsideTekla"/>.
+        /// </summary>
+        /// <param name="exportName">Decorated (mangled) export name.</param>
+        internal static bool HasExport(string exportName)
+        {
+            EnsureInsideTekla();
+            return GetProcAddress(GetModuleHandle(NativeFile.DRAWINGS), exportName) != IntPtr.Zero;
         }
     }
 }

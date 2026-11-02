@@ -13,16 +13,25 @@ namespace TeklaHelper.DrawingNative.Plugin
     /// OOP wrapper for grclaPluginInput_c: one input (picked point or picked object) of a drawing plugin.
     /// </summary>
     /// <remarks>
-    /// Native layout (sizeof = 0x48):
+    /// Native layout, Tekla 2025/2026 (sizeof = 0x48):
     /// 0x00 vector&lt;Vector_c&gt; Points | 0x18 set&lt;int&gt; AnchoredPoints | 0x38 int ObjectId
     /// | 0x3C int Id | 0x40 int World | 0x44 int RelationType.
+    /// <para>
+    /// Tekla 2020 (sizeof = 0x50): 0x00 toolArray_c&lt;Vector_c&gt; Points (data pointer at 0x00, int count at 0x10)
+    /// | 0x20 set&lt;int&gt; AnchoredPoints | 0x40 int ObjectId | 0x44 int Id | 0x48 int World | 0x4C int RelationType.
+    /// See <see cref="DrawingsBuild"/>.
+    /// </para>
     /// </remarks>
     public sealed class NativePluginInput : IDisposable
     {
-        private const int NativeSize = 0x48;
+        // Bytes allocated for one grclaPluginInput_c: 0x48 (2025/2026) or 0x50 (2020), with slack so that a larger
+        // object in another Tekla build cannot make the native constructor write past the block (heap corruption).
+        private const int NativeSize = 0x100;
         private const int OffsetPointsBegin = 0x00;
         private const int OffsetPointsEnd = 0x08;
+        private const int OffsetToolArrayCount = 0x10;
         private const int OffsetRelationType = 0x44;
+        private const int OffsetRelationTypeToolArray = 0x4C;
         private const int VectorSize = 0x18;
 
         private IntPtr _nativeHandle;
@@ -72,9 +81,11 @@ namespace TeklaHelper.DrawingNative.Plugin
         /// <param name="world">World (view) of the input.</param>
         /// <param name="points">Points of the input.</param>
         /// <exception cref="ArgumentNullException"><paramref name="points"/> is null.</exception>
+        /// <exception cref="NotSupportedException">Tekla Structures 2020 (its constructor takes a toolArray_c).</exception>
         public static NativePluginInput ForPoints(int world, IList<NativeVector3> points)
         {
             if (points == null) throw new ArgumentNullException("points");
+            DrawingsBuild.EnsureStdVectorBuild("NativePluginInput.ForPoints");
 
             return Construct(p =>
             {
@@ -227,7 +238,12 @@ namespace TeklaHelper.DrawingNative.Plugin
         /// </summary>
         public RelationType RelationType
         {
-            get { return IsValid ? (RelationType)Marshal.ReadInt32(_nativeHandle, OffsetRelationType) : RelationType.All; }
+            get
+            {
+                if (!IsValid) return RelationType.All;
+                int offset = DrawingsBuild.UsesToolArray ? OffsetRelationTypeToolArray : OffsetRelationType;
+                return (RelationType)Marshal.ReadInt32(_nativeHandle, offset);
+            }
         }
 
         /// <summary>Whether this is a point input (RelationType 100002..100005).</summary>
@@ -248,6 +264,11 @@ namespace TeklaHelper.DrawingNative.Plugin
             get
             {
                 if (!IsValid) return 0;
+                if (DrawingsBuild.UsesToolArray)
+                {
+                    int count = Marshal.ReadInt32(_nativeHandle, OffsetToolArrayCount);
+                    return count > 0 ? count : 0;
+                }
                 long bytes = Marshal.ReadIntPtr(_nativeHandle, OffsetPointsEnd).ToInt64()
                            - Marshal.ReadIntPtr(_nativeHandle, OffsetPointsBegin).ToInt64();
                 return bytes > 0 ? (int)(bytes / VectorSize) : 0;
@@ -255,7 +276,8 @@ namespace TeklaHelper.DrawingNative.Plugin
         }
 
         /// <summary>
-        /// Copy of the input points (read directly from the Points vector at offset 0x00, like GetPoints()).
+        /// Copy of the input points (read directly from the Points array at offset 0x00, like GetPoints(); both the
+        /// std::vector and the toolArray_c of Tekla 2020 start with the pointer to the first element).
         /// </summary>
         public List<NativeVector3> Points
         {

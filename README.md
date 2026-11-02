@@ -14,10 +14,16 @@ It covers what the Tekla Open API cannot do:
 |---|---|
 | Platform | .NET Framework 4.8, **x64** |
 | Runtime | **Inside the Tekla process** (macros, plugins) with a drawing open |
+| Tekla Structures | Verified only on **2020, 2025 and 2026** |
 
 > The library calls Tekla's native DLLs directly. In an external process (console app, WinForms...) those DLLs hold
 > no drawing data, so every method throws `InvalidOperationException`. The only exception is the saved drawing file
 > reader (`TeklaHelper.DrawingNative.DrawingFile`), which is plain managed code and works in any process.
+
+> The library has only been verified on Tekla Structures 2020, 2025 and 2026; other versions are untested. Tekla 2020
+> uses its own array type (`toolArray_c`) instead of `std::vector` in a few native functions, so on 2020
+> `NativePluginInput.ForPoints`, `DrawingNativePlugin.GetRelationChildIds` and `GetRelationFatherIds` throw
+> `NotSupportedException`; every other member works.
 
 ## Installation
 

@@ -133,10 +133,12 @@ namespace TeklaHelper.DrawingNative.Plugin
         /// <param name="fatherId">ID of the father object.</param>
         /// <param name="relationType">Relation type to filter on; <see cref="RelationType.All"/> = every type.</param>
         /// <returns>Child IDs of the matching relations.</returns>
+        /// <exception cref="System.NotSupportedException">Tekla Structures 2020 (the native function returns a toolArray_c).</exception>
         public static List<int> GetRelationChildIds(int fatherId, RelationType relationType = RelationType.All)
         {
             if (fatherId <= 0) return new List<int>();
             NativeHost.EnsureInsideTekla();
+            DrawingsBuild.EnsureStdVectorBuild("DrawingNativePlugin.GetRelationChildIds");
             return NativeMethods.Relation_GetIDsOfChildren(fatherId, (int)relationType).ToListAndFree();
         }
 
@@ -146,10 +148,12 @@ namespace TeklaHelper.DrawingNative.Plugin
         /// <param name="childId">ID of the child object.</param>
         /// <param name="relationType">Relation type to filter on; <see cref="RelationType.All"/> = every type.</param>
         /// <returns>Father IDs of the matching relations.</returns>
+        /// <exception cref="System.NotSupportedException">Tekla Structures 2020 (the native function returns a toolArray_c).</exception>
         public static List<int> GetRelationFatherIds(int childId, RelationType relationType = RelationType.All)
         {
             if (childId <= 0) return new List<int>();
             NativeHost.EnsureInsideTekla();
+            DrawingsBuild.EnsureStdVectorBuild("DrawingNativePlugin.GetRelationFatherIds");
             return NativeMethods.Relation_GetIDsOfFathers(childId, (int)relationType).ToListAndFree();
         }
 
