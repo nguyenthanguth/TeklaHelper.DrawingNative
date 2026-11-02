@@ -66,7 +66,7 @@ managed code. It works in any process, also outside Tekla, but only sees the dra
 | Member | Purpose |
 |---|---|
 | `DgMetadata.FindLatest(drawingsDirectory, drawingGuid)` | Newest saved version of a drawing (`DrawingFilePath`, `ModifyTime`, `Name`, `Mark`) |
-| `DgFile.Load(path)` / `Load(stream)` | Load a .dg file (gzip-compressed or already decompressed) |
+| `DgFile.Load(path)` / `Load(stream)` | Load a .dg file (gzip-compressed or already decompressed; header `Xsteel` or the older `Xsteel#`) |
 | `DgFile.GetChildIds(pluginId)` | IDs of the objects drawn by a plugin, as saved (same result as `DrawingNativePlugin.GetChildIds`) |
 | `DgFile.GetDimensionIds(dimensionSetId)` | IDs of the dimensions inside a dimension set |
 | `DgFile.GetObjects()` | Every row of the gr_object table (`DgDrawingObject`: type, ID, World, owning plugin) |

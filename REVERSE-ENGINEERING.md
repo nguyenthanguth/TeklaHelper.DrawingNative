@@ -26,6 +26,8 @@ determine their exact signatures and memory layouts, and wrap them in a safe C# 
 | `Tekla.Structures.Native.DbvDatabase.dll` | SHA-256 `605a3ab88d9f013919081a7d9e5a244b9a9ea7719cf5aa1fc83836cf2640dd18` |
 | `DBdict.dll` | SHA-256 `9a3dcec4f6154df758ade916aa5278de4be33582be60f64674dd7d4d8749a4d1` |
 | `DBvirtual.dll` | SHA-256 `54e65ccea86dc8eba2a44d03adc6dccdb5bf23cfc73847088e9b75650e7f9def` |
+| `DBvirtual.dll` (Tekla Structures 2020, for the older .dg layout) | SHA-256 `3d337ff73dc02a6310468dd0f620f9a0ab6c17a8a6471f0faaf15750a4621d06` |
+| `DBvirtual.dll` 5.4.1 (Tekla Structures 2026, .dg layout check) | SHA-256 `1c776cafe82478bb2a9457994d165f120e991b37a4b72abe103fb783e5037011` |
 
 The first analysis of `Drawings.dll` (about 20 MB) takes a very long time, so `ghidra.startup_timeout_ms` had to be raised to
 `2400000` (40 minutes).
@@ -178,7 +180,9 @@ then checked by parsing a real file to its last byte.
 - The state byte is 1..10. `dbv_readtable` rejects 11 and 12, and skips rows in state 6, 8 or 10 (bit mask `0x1d40`),
   so the library reports them as deleted.
 - The row lengths match the tables in memory: `gr_object` (`0x130`) `0x18`, dimension (`0x100`) `0x5D8`, mark (`0x108`)
-  `0x248`, graphic object (`0x116`) `0x128`.
+  `0x248`, graphic object (`0x116`) `0x128`. Row lengths change between versions (Tekla Structures 2026 writes
+  `Xsteel  9.58` with dimension `0x629` and graphic object `0x130`), which is why the reader takes them from the file.
+  The fields the library reads (`gr_object` `+0x0`..`+0xC`, dimension `+0x4` and `+0xC`) are unchanged.
 - Dimension table (`0x100`): `+0x4` dimension ID, `+0x8` World, `+0xC` ID of the **dimension set** that contains it.
   In memory the same field is the key of the index `gr_dim_pid_idx`. This matches `DimensionSetBase.GetObjects()`
   of the Open API.
@@ -188,6 +192,31 @@ of one drawing were found in the test model), so the file name is not the drawin
 `D<random guid>.dg.metadata` (`<DrawingVersionMetadata>`) with `DrawingGuid` (= `Drawing.GetIdentifier().GUID`),
 `Name`, `Mark`, `DrawingType` and `ModifyDate`. `ModifyDate` counts seconds since 1970 in local wall-clock time, not UTC:
 it matches the local write time of the .dg file. The newest version is the one with the largest `ModifyDate`.
+
+**Older layout (`Xsteel#`).** Tekla Structures 2020 writes `Xsteel# 8.95`: the `#` marks a *domain* layout, read by
+`dbv_read_domain` and `dbv_readtable_domain` of its `DBvirtual.dll`. The rows themselves are unchanged (`gr_object` is still `0x18` bytes, the dimension table still has the set ID at
+`+0xC`), only the framing differs:
+
+- After the header: `uint32` domain count, then the **domain header**: marker `0xDBCEC0B9 + version` (version 3 in the
+  sample, the only version that stores the domain flags in the file), `uint32 0`, `uint32` domain count, then per domain:
+  `uint32` flags, `uint32` entry count, entries 1..n-1 (`int32` key, `int32` index unless flag `0x40`, 16-byte GUID),
+  optional parts for flags `0x10` / `0x4`, and two domain values. Domain kinds (`flags & 0x83`) decide the bytes after a
+  value: kind 1 none, kind 2 eight bytes, kinds `0x81` / `0x82` a 16-byte GUID. Flag `0x400` makes the values 64-bit.
+- Every table: marker `0xDBCEC063 + version` (`0xDBCEC066`), `uint32` row length, `uint32 n`, `n` `int32` domain numbers
+  (column 0 = domain of the row identity, negative = 64-bit values; then one per field, 0 = none), then per row a state
+  byte, the row bytes, two identity values with their extra bytes, and the extra bytes of every field that has a domain.
+  A `0` state byte ends the table; there is no row count.
+- State 12 marks deleted rows (`dbv_readtable_domain` skips them; it is in the bit mask `0x1d40`). The directory holds
+  each table number twice, once live and once in state 12; only live entries have a table, in reverse directory order.
+
+The sample file (`Xsteel# 8.95`, one GUID domain) parses to its last byte: 46 tables, 927 `gr_object` rows.
+
+**Tekla Structures 2026.** `DBvirtual.dll` 5.4.1 still has both readers: the plain table reader (`dbv_readtable` →
+`FUN_180040f70`) is the same as in 2025 (row count + row length, states 1..12 with 11 and 12 rejected, mask `0x1d40`),
+and the domain readers (`FUN_18008fd60`, `FUN_180092940`, value reader `FUN_18009c4c0`) keep the 2020 markers, domain
+header version 3, flags and value sizes. The 2026 sample drawing uses the plain layout (`Xsteel  9.58`) and parses to
+its last byte: 47 tables, 6009 `gr_object` rows, 659 plugins with 3574 drawn objects; all 197 dimension rows point
+(`+0xC`) to one of the 197 dimension sets.
 
 The result is `DrawingFile/DgFile.cs` and `DrawingFile/DgMetadata.cs`.
 

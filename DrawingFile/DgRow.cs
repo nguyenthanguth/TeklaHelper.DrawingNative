@@ -20,16 +20,17 @@ namespace TeklaHelper.DrawingNative.DrawingFile
         }
 
         /// <summary>
-        /// Row state byte (1..10). DBvirtual.dll skips rows in state 6, 8 or 10 when it loads a table (see <see cref="IsDeleted"/>).
+        /// Row state byte: 1..10, or 1..12 (except 11) in the domain layout of older versions ("Xsteel#").
+        /// DBvirtual.dll skips rows in state 6, 8, 10, 11 or 12 when it loads a table (see <see cref="IsDeleted"/>).
         /// </summary>
         public byte State { get; private set; }
 
         /// <summary>
-        /// Whether DBvirtual.dll ignores this row when loading the table (state 6, 8 or 10).
+        /// Whether DBvirtual.dll ignores this row when loading the table (state 6, 8, 10, 11 or 12, bit mask 0x1d40).
         /// </summary>
         public bool IsDeleted
         {
-            get { return State == 6 || State == 8 || State == 10; }
+            get { return State < 32 && ((0x1d40 >> State) & 1) != 0; }
         }
 
         /// <summary>Row length in bytes.</summary>

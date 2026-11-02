@@ -1,6 +1,7 @@
 // =====================================================================================
 // TeklaHelper.DrawingNative - DgFile: reads a saved drawing file (<model>\drawings\D<guid>.dg) without Tekla
-// Format reverse engineered from dbv_readtable (DBvirtual.dll, FUN_18003ee20); see REVERSE-ENGINEERING.md.
+// Format reverse engineered from dbv_readtable (DBvirtual.dll, FUN_18003ee20) and, for the older "Xsteel#" layout,
+// dbv_read_domain / dbv_readtable_domain; see REVERSE-ENGINEERING.md.
 // =====================================================================================
 
 using System;
@@ -25,12 +26,42 @@ namespace TeklaHelper.DrawingNative.DrawingFile
     /// one table per directory entry    in reverse directory order
     /// </code>
     /// Every table is: uint32 row count, uint32 row length, then per row one state byte followed by the row bytes.
+    /// <para>
+    /// Older versions write the domain layout, marked by '#' in the header
+    /// ("Xsteel# 8.95"), taken from dbv_read_domain and dbv_readtable_domain:
+    /// <code>
+    /// "Xsteel#%5.2f"                   12-byte header
+    /// uint32 domain count, domain header (marker 0xDBCEC0B9 + version, then one description per domain)
+    /// table directory, then the tables of the directory entries that are not deleted, in reverse directory order
+    /// </code>
+    /// Every table is: marker 0xDBCEC063 + version, uint32 row length, uint32 n, n int32 domain numbers (the domain
+    /// of the row identity, then one per field), then per row a state byte, the row bytes and the domain values,
+    /// ending with a 0 state byte. The row bytes have the same layout in both formats.
+    /// </para>
     /// </remarks>
     public sealed class DgFile
     {
         private const string HeaderPrefix = "Xsteel";
         private const int HeaderLength = 12;
         private const int MaxRowSize = 0x100000;
+
+        // Domain layout ("Xsteel#"). Markers are a base plus the domain header version; only version 3 stores the
+        // domain flags in the file.
+        private const char DomainFormatMark = '#';
+        private const uint DomainHeaderMarkerBase = 0xDBCEC0B9;
+        private const uint DomainTableMarkerBase = 0xDBCEC063;
+        private const int SupportedDomainVersion = 3;
+        private const uint MaxDomainCount = 0x3FF;
+
+        // Domain flags: kind (bits 0x83), 64-bit values, and the optional parts of a domain description.
+        private const uint DomainKindMask = 0x83;
+        private const uint DomainKnownFlags = 0xFFF;
+        private const uint DomainRangesFlag = 0x4;
+        private const uint DomainFreeListFlag = 0x10;
+        private const uint DomainShortEntryFlag = 0x40;
+        private const uint Domain64BitFlag = 0x400;
+        private const uint DomainRunMapFlag = 0x800;
+        private const int DomainGuidLength = 16;
 
         // gr_object row: +0x0 GR_O_* type, +0x4 ID, +0x8 World, +0xC belongs_to.
         private const int GrObjectTable = 0x130;
@@ -109,9 +140,13 @@ namespace TeklaHelper.DrawingNative.DrawingFile
                 throw new InvalidDataException("Not a Tekla drawing file: the '" + HeaderPrefix + "' header is missing.");
             }
 
-            string header = Encoding.ASCII.GetString(data, 0, HeaderLength).TrimEnd();
+            // "Xsteel" + one layout character (' ' or '#') + "%5.2f"; parsed before trimming so a blank version is safe.
+            string rawHeader = Encoding.ASCII.GetString(data, 0, HeaderLength);
+            string header = rawHeader.TrimEnd();
             double version;
-            double.TryParse(header.Substring(HeaderPrefix.Length), NumberStyles.Float, CultureInfo.InvariantCulture, out version);
+            double.TryParse(rawHeader.Substring(HeaderPrefix.Length + 1), NumberStyles.Float, CultureInfo.InvariantCulture, out version);
+
+            if (rawHeader[HeaderPrefix.Length] == DomainFormatMark) return ParseDomainFormat(data, header, version);
 
             int position = HeaderLength;
             DgTable directory = ReadTable(data, ref position, 0);
@@ -171,6 +206,165 @@ namespace TeklaHelper.DrawingNative.DrawingFile
             }
 
             return new DgTable(number, (int)rowSize, rows);
+        }
+
+        /// <summary>
+        /// Parses the domain layout of older versions ("Xsteel#"): domain header, directory, then the tables of the
+        /// directory entries that are not deleted, in reverse directory order (dbv_read_domain, dbv_readtable_domain).
+        /// </summary>
+        private static DgFile ParseDomainFormat(byte[] data, string header, double version)
+        {
+            int position = HeaderLength;
+            uint domainCount = ReadUInt32(data, ref position);
+            int domainVersion = (int)(ReadUInt32(data, ref position) - DomainHeaderMarkerBase);
+            if (domainVersion != SupportedDomainVersion)
+            {
+                throw new InvalidDataException("Unsupported domain header version " + domainVersion + ".");
+            }
+            if (ReadUInt32(data, ref position) != 0 || ReadUInt32(data, ref position) != domainCount ||
+                domainCount - 1 >= MaxDomainCount)
+            {
+                throw new InvalidDataException("Invalid domain header.");
+            }
+
+            uint[] domainFlags = new uint[domainCount];
+            for (int i = 0; i < domainFlags.Length; i++) domainFlags[i] = SkipDomain(data, ref position);
+
+            uint tableMarker = DomainTableMarkerBase + (uint)domainVersion;
+            DgTable directory = ReadDomainTable(data, ref position, 0, tableMarker, domainFlags);
+            if (directory.Rows.Count > 0 && directory.RowSize != sizeof(int))
+            {
+                throw new InvalidDataException("Unexpected table directory row length " + directory.RowSize + ".");
+            }
+
+            // Deleted directory entries (state 12) have no table.
+            List<int> tableNumbers = new List<int>();
+            foreach (DgRow row in directory.Rows)
+            {
+                if (!row.IsDeleted) tableNumbers.Add(row.ReadInt32(0));
+            }
+
+            Dictionary<int, DgTable> tables = new Dictionary<int, DgTable>();
+            for (int i = tableNumbers.Count - 1; i >= 0; i--)
+            {
+                tables[tableNumbers[i]] = ReadDomainTable(data, ref position, tableNumbers[i], tableMarker, domainFlags);
+            }
+
+            return new DgFile(header, version, tableNumbers, tables);
+        }
+
+        /// <summary>
+        /// Skips one domain description of the domain header and returns its flags.
+        /// </summary>
+        private static uint SkipDomain(byte[] data, ref int position)
+        {
+            uint flags = ReadUInt32(data, ref position);
+            if ((flags & ~DomainKnownFlags) != 0 || (flags & DomainKindMask) == 1 || (flags & DomainRunMapFlag) != 0)
+            {
+                throw new InvalidDataException("Unsupported domain flags 0x" + flags.ToString("X") + ".");
+            }
+
+            // Identity entries: int32 key, int32 index (unless DomainShortEntryFlag), 16-byte GUID; entry 0 is not stored.
+            uint entryCount = ReadUInt32(data, ref position);
+            int entryLength = sizeof(int) + ((flags & DomainShortEntryFlag) == 0 ? sizeof(int) : 0) + DomainGuidLength;
+            if (entryCount > 1) Skip(data, ref position, (entryCount - 1L) * entryLength);
+
+            if ((flags & DomainFreeListFlag) != 0)
+            {
+                while (ReadUInt32(data, ref position) != 0) { }
+            }
+            if ((flags & DomainRangesFlag) != 0) Skip(data, ref position, ReadUInt32(data, ref position) * 16L);
+
+            // Two domain values close the description.
+            int valueLength = (flags & Domain64BitFlag) != 0 ? sizeof(long) : sizeof(int);
+            Skip(data, ref position, 2 * (valueLength + DomainValueExtraLength(flags)));
+            return flags;
+        }
+
+        /// <summary>
+        /// Bytes stored after a domain value, by domain kind: none (1), 8 bytes (2) or a GUID (0x81, 0x82).
+        /// </summary>
+        private static int DomainValueExtraLength(uint flags)
+        {
+            switch (flags & DomainKindMask)
+            {
+                case 0x1: return 0;
+                case 0x2: return sizeof(long);
+                case 0x81:
+                case 0x82: return DomainGuidLength;
+                default: throw new InvalidDataException("Unsupported domain kind 0x" + (flags & DomainKindMask).ToString("X") + ".");
+            }
+        }
+
+        /// <summary>
+        /// Reads one table of the domain layout: marker, row length, domain numbers, then (state byte + row + domain
+        /// values) per row until a 0 state byte.
+        /// </summary>
+        private static DgTable ReadDomainTable(byte[] data, ref int position, int number, uint marker, uint[] domainFlags)
+        {
+            string table = "table 0x" + number.ToString("X");
+            if (ReadUInt32(data, ref position) != marker)
+            {
+                throw new InvalidDataException("Missing marker of " + table + ".");
+            }
+
+            uint rowSize = ReadUInt32(data, ref position);
+            uint columnCount = ReadUInt32(data, ref position);
+            if (rowSize > MaxRowSize || columnCount == 0 || columnCount * 4L > data.Length - position)
+            {
+                throw new InvalidDataException("Invalid header of " + table + ".");
+            }
+
+            // Column 0 is the domain of the row identity (two values, 64-bit if negative); the others are the fields.
+            long valuesLength = 0;
+            for (int column = 0; column < columnCount; column++)
+            {
+                int domain = (int)ReadUInt32(data, ref position);
+                bool is64Bit = domain < 0;
+                if (is64Bit && column > 0) throw new InvalidDataException("Invalid field domain in " + table + ".");
+                if (is64Bit) domain = -domain;
+                if (domain == 0) continue;
+                if (domain < 0 || domain > domainFlags.Length) throw new InvalidDataException("Unknown domain in " + table + ".");
+
+                int extraLength = DomainValueExtraLength(domainFlags[domain - 1]);
+                valuesLength += column == 0 ? 2 * ((is64Bit ? sizeof(long) : sizeof(int)) + extraLength) : extraLength;
+            }
+
+            long rowLength = 1 + rowSize + valuesLength;
+            List<DgRow> rows = new List<DgRow>();
+            while (true)
+            {
+                if (position >= data.Length) throw new InvalidDataException("Drawing file is truncated inside " + table + ".");
+
+                byte state = data[position];
+                if (state == 0) break;
+                if (state > 12 || state == 11 || rowLength > data.Length - position)
+                {
+                    throw new InvalidDataException("Invalid row in " + table + ".");
+                }
+
+                byte[] row = new byte[rowSize];
+                Buffer.BlockCopy(data, position + 1, row, 0, (int)rowSize);
+                rows.Add(new DgRow(state, row));
+                position += (int)rowLength;
+            }
+            position++;
+
+            return new DgTable(number, (int)rowSize, rows);
+        }
+
+        private static uint ReadUInt32(byte[] data, ref int position)
+        {
+            if (position > data.Length - sizeof(uint)) throw new InvalidDataException("Drawing file is truncated.");
+            uint value = BitConverter.ToUInt32(data, position);
+            position += sizeof(uint);
+            return value;
+        }
+
+        private static void Skip(byte[] data, ref int position, long length)
+        {
+            if (length > data.Length - position) throw new InvalidDataException("Drawing file is truncated.");
+            position += (int)length;
         }
 
         #endregion

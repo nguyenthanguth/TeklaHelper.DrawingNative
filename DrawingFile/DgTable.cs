@@ -9,7 +9,7 @@ namespace TeklaHelper.DrawingNative.DrawingFile
 {
     /// <summary>
     /// One table of the drawing database as written by dbv_writetable (DBvirtual.dll):
-    /// a header (row count, row length) followed by the rows.
+    /// a header (row count, row length) followed by the rows, or in the older domain layout by dbv_writetable_domain.
     /// </summary>
     public sealed class DgTable
     {
